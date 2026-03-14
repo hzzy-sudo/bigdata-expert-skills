@@ -1,427 +1,570 @@
 ---
 name: bigdata-ops
-description: 大数据运维专家技能集。用于大数据集群部署、运维、故障排查、监控告警等工作。包括Hadoop、Kafka、Flink、Spark等组件的安装配置、性能调优、故障诊断。适用于需要部署大数据集群、排查组件故障、配置监控告警的场景。
+description: 大数据运维专家技能集。用于大数据集群部署、运维、故障排查、监控告警等工作。包括Hadoop、Kafka、Flink、Spark等组件的安装配置、性能调优、问题发现、定位与解决、复盘反思。此skill包含完整的发现问题-定位问题-解决问题-复盘反思闭环。
 ---
 
 # 大数据运维专家
 
-## 1. Hadoop集群部署
+## 核心能力图谱
 
-### 1.1 环境准备
-
-```bash
-# 1. 修改hostname
-hostnamectl set-hostname node1
-
-# 2. 配置hosts
-cat >> /etc/hosts << EOF
-192.168.1.101 node1
-192.168.1.102 node2
-192.168.1.103 node3
-EOF
-
-# 3. 关闭防火墙
-systemctl stop firewalld
-systemctl disable firewalld
-
-# 4. 关闭SELinux
-setenforce 0
-sed -i 's/SELINUX=enforcing/SELINUX=disabled/' /etc/selinux/config
-
-# 5. 配置SSH免密
-ssh-keygen -t rsa
-ssh-copy-id node2
-ssh-copy-id node3
-
-# 6. 安装JDK
-yum install -y java-1.8.0-openjdk java-1.8.0-openjdk-devel
-echo "JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk" >> /etc/profile
+```
+发现问题 ──→ 定位问题 ──→ 解决问题 ──→ 复盘反思
+    │              │              │            │
+    ▼              ▼              ▼            ▼
+  监控告警      日志分析       参数调优      经验沉淀
+  业务反馈      线程分析       资源调整      文档记录
+  指标异常     dump分析        版本回滚      知识库
 ```
 
-### 1.2 HDFS部署
+---
+
+## 1. Hadoop集群部署与运维
+
+### 1.1 发现问题
+
+**监控指标**：
+- NameNode内存使用率 > 80%
+- DataNode磁盘使用率 > 85%
+- YARN队列资源使用率 > 90%
+- 任务失败率 > 1%
+
+**业务反馈**：
+- 作业提交失败
+- 任务运行缓慢
+
+**系统告警**：
+- 磁盘空间不足
+- JVM OOM
+- RPC超时
+
+### 1.2 定位问题
 
 ```bash
-# 1. 下载Hadoop
-wget https://dlcdn.apache.org/hadoop/common/hadoop-3.3.6/hadoop-3.3.6.tar.gz
-tar -zxf hadoop-3.3.6.tar.gz -C /opt/
+# 1. 检查集群健康状态
+hdfs dfsadmin -report
+yarn rmadmin -getServiceState rm1
 
-# 2. 配置环境变量
-export HADOOP_HOME=/opt/hadoop-3.3.6
-export PATH=$PATH:$HADOOP_HOME/bin:$HADOOP_HOME/sbin
+# 2. 检查NameNode状态
+hdfs fsck / -files -blocks -locations
+hdfs namenode -safemode get
 
-# 3. core-site.xml
-cat > $HADOOP_HOME/etc/hadoop/core-site.xml << EOF
-<configuration>
-    <property>
-        <name>fs.defaultFS</name>
-        <value>hdfs://node1:9000</value>
-    </property>
-    <property>
-        <name>hadoop.tmp.dir</name>
-        <value>/opt/hadoop/tmp</value>
-    </property>
-</configuration>
+# 3. 检查YARN队列
+yarn queue -status default
+yarn application -list -states RUNNING
 
-# 4. hdfs-site.xml
-cat > $HADOOP_HOME/etc/hadoop/hdfs-site.xml << EOF
-<configuration>
-    <property>
-        <name>dfs.replication</name>
-        <value>3</value>
-    </property>
-    <property>
-        <name>dfs.namenode.http-address</name>
-        <value>node1:9870</value>
-    </property>
-    <property>
-        <name>dfs.namenode.secondary.http-address</name>
-        <value>node2:9868</value>
-    </property>
-</configuration>
+# 4. 检查日志
+tail -f /opt/hadoop/logs/hadoop-root-namenode-*.log
+tail -f /opt/hadoop/logs/yarn-root-resourcemanager-*.log
 
-# 5. workers文件
-cat > $HADOOP_HOME/etc/hadoop/workers << EOF
-node1
-node2
-node3
-EOF
+# 5. JVM分析
+jstack <namenode_pid>
+jmap -heap <namenode_pid>
+jstat -gcutil <namenode_pid> 1000
 
-# 6. 格式化NN
-hdfs namenode -format
-
-# 7. 启动HDFS
-start-dfs.sh
+# 6. 线程分析
+ps -T -p <pid>
+top -H -p <pid>
 ```
 
-### 1.3 YARN部署
+### 1.3 解决问题
 
 ```bash
-# 1. mapred-site.xml
-cat > $HADOOP_HOME/etc/hadoop/mapred-site.xml << EOF
-<configuration>
-    <property>
-        <name>mapreduce.framework.name</name>
-        <value>yarn</value>
-    </property>
-    <property>
-        <name>mapreduce.jobhistory.address</name>
-        <value>node1:10020</value>
-    </property>
-</configuration>
+# ==================== 问题1：NameNode OOM ====================
+# 原因：元数据内存不足
+# 解决：
+# 1. 调整JVM堆内存
+export HADOOP_NAMENODE_OPTS="-Xms4g -Xmx4g -XX:+UseG1GC"
 
-# 2. yarn-site.xml
-cat > $HADOOP_HOME/etc/hadoop/yarn-site.xml << EOF
-<configuration>
-    <property>
-        <name>yarn.resourcemanager.hostname</name>
-        <value>node1</value>
-    </property>
-    <property>
-        <name>yarn.nodemanager.aux-services</name>
-        <value>mapreduce_shuffle</value>
-    </property>
-    <property>
-        <name>yarn.nodemanager.resource.memory-mb</name>
-        <value>16384</value>
-    </property>
-    <property>
-        <name>yarn.nodemanager.resource.cpu-vcores</name>
-        <value>8</value>
-    </property>
-</configuration>
+# 2. 优化元数据
+hdfs dfsadmin -saveNamespace  # 合并fsimage
 
-# 3. 启动YARN
-start-yarn.sh
+# 3. 限制连接数
+dfs.namenode.handler.count=100
+
+
+# ==================== 问题2：DataNode磁盘满 ====================
+# 解决：
+# 1. 扩容
+hdfs dfsadmin -report
+
+# 2. 清理数据
+hdfs dfs -rm -r -skipTrash /tmp/*
+
+# 3. 添加新磁盘
+hdfs dfsadmin -refreshNodes
+
+
+# ==================== 问题3：YARN资源争抢 ====================
+# 解决：
+# 1. 配置队列
+yarn-scheduler.xml:
+<property>
+  <name>yarn.scheduler.capacity.root.default.capacity</name>
+  <value>40</value>
+</property>
+
+# 2. 限制单用户资源
+yarn.scheduler.capacity.root.default.user-limit-factor=1
+
+
+# ==================== 问题4：HDFS小文件多 ====================
+# 解决：
+# 1. 定期合并
+hdfs balancer -threshold 10
+
+# 2. 使用Archive
+hdfs archive -archiveName myarchive.har -p /user/input /user/archive
 ```
 
-## 2. Kafka集群部署
+### 1.4 复盘反思
 
-### 2.1 安装配置
+```sql
+-- 创建运维问题记录表
+CREATE TABLE ops_issue_log (
+    issue_id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    component STRING,           -- HDFS/YARN/HIVE
+    issue_type STRING,         -- OOM/PERFORMANCE/DISK/NETWORK
+    symptom STRING,             -- 症状
+    root_cause STRING,         -- 根因
+    solution STRING,           -- 解决方案
+    prevention STRING,        -- 预防措施
+    find_time TIMESTAMP,
+    resolve_time TIMESTAMP,
+    owner STRING
+);
 
-```bash
-# 1. 下载Kafka
-wget https://archive.apache.org/dist/kafka/3.6.0/kafka_2.13-3.6.0.tgz
-tar -zxf kafka_2.13-3.6.0.tgz -C /opt/
-
-# 2. server.properties配置
-cat > /opt/kafka_2.13-3.6.0/config/server.properties << EOF
-broker.id=0
-listeners=PLAINTEXT://node1:9092
-advertised.listeners=PLAINTEXT://node1:9092
-zookeeper.connect=node1:2181,node2:2181,node3:2181
-log.dirs=/opt/kafka/logs
-num.network.threads=8
-num.io.threads=16
-socket.send.buffer.bytes=102400
-socket.receive.buffer.bytes=102400
-socket.request.max.bytes=104857600
-num.partitions=3
-num.recovery.threads.per.data.dir=1
-offsets.topic.replication.factor=3
-transaction.state.log.replication.factor=3
-transaction.state.log.min.isr=2
-log.retention.hours=168
-log.segment.bytes=1073741824
-log.retention.check.interval.ms=300000
-zookeeper.connect.timeout.ms=18000
-group.initial.rebalance.delay.ms=0
-EOF
-
-# 3. 多节点配置
-# node2: broker.id=1, listeners=PLAINTEXT://node2:9092
-# node3: broker.id=2, listeners=PLAINTEXT://node3:9092
+-- 记录问题
+INSERT INTO ops_issue_log (component, issue_type, symptom, root_cause, solution, prevention, find_time, resolve_time, owner)
+VALUES 
+(
+    'HDFS',
+    'OOM',
+    'NameNode内存使用率95%',
+    '元数据过大，未定期清理',
+    '增加堆内存，合并fsimage',
+    '设置定期合并任务',
+    '2024-01-01 10:00:00',
+    '2024-01-01 12:00:00',
+    '运维组'
+);
 ```
 
-### 2.2 启动管理
+---
+
+## 2. Kafka集群部署与运维
+
+### 2.1 发现问题
+
+**监控指标**：
+- 消费延迟 > 10000条
+- 磁盘使用率 > 80%
+- 副本Lag > 1000
+- 消息积压率 > 50%
+
+**告警**：
+- Broker down
+- Partition leader不可用
+- ISR收缩
+
+### 2.2 定位问题
 
 ```bash
-# 1. 启动Zookeeper
-zookeeper-server-start.sh -daemon config/zookeeper.properties
-
-# 2. 启动Kafka
-kafka-server-start.sh -daemon config/server.properties
-
-# 3. 创建Topic
-kafka-topics.sh --create \
-  --topic test-topic \
-  --partitions 6 \
-  --replication-factor 3 \
-  --bootstrap-server node1:9092,node2:9092,node3:9092
-
-# 4. 查看Topic
-kafka-topics.sh --describe \
-  --topic test-topic \
-  --bootstrap-server node1:9092
-```
-
-### 2.3 运维命令
-
-```bash
-# 生产消息
-kafka-console-producer.sh \
-  --topic test-topic \
-  --bootstrap-server node1:9092
-
-# 消费消息
-kafka-console-consumer.sh \
-  --topic test-topic \
-  --from-beginning \
-  --bootstrap-server node1:9092
-
-# 查看消费组
+# 1. 检查消费延迟
 kafka-consumer-groups.sh \
-  --bootstrap-server node1:9092 \
-  --list
-
-# 查看积压
-kafka-consumer-groups.sh \
-  --bootstrap-server node1:9092 \
+  --bootstrap-server localhost:9092 \
   --group test-group \
   --describe
 
-# 调整分区
+# 2. 检查Broker状态
+kafka-broker-api-versions.sh --bootstrap-server localhost:9092
+
+# 3. 检查Topic状态
+kafka-topics.sh --describe \
+  --topic test-topic \
+  --bootstrap-server localhost:9092
+
+# 4. 检查ISR
+kafka-topics.sh --describe \
+  --topic test-topic \
+  --bootstrap-server localhost:9092 | grep ISR
+
+# 5. 检查日志
+tail -f /opt/kafka/logs/server.log
+
+# 6. 检查磁盘IO
+iostat -x 1
+```
+
+### 2.3 解决问题
+
+```bash
+# ==================== 问题1：消息积压 ====================
+# 原因：消费者处理慢/消费者少
+# 解决：
+# 1. 增加消费者
+kafka-consumer-groups.sh \
+  --bootstrap-server localhost:9092 \
+  --group test-group \
+  --reset-offsets \
+  --to-earliest \
+  --topic test-topic \
+  --execute
+
+# 2. 调整fetch参数
+fetch.min.bytes=1
+fetch.max.wait.ms=500
+max.poll.records=500
+
+# 3. 增加分区
 kafka-topics.sh --alter \
   --topic test-topic \
-  --partitions 9 \
-  --bootstrap-server node1:9092
-```
+  --partitions 12 \
+  --bootstrap-server localhost:9092
 
-## 3. Flink集群部署
 
-### 3.1 Standalone模式
+# ==================== 问题2：磁盘满 ====================
+# 解决：
+# 1. 清理日志
+kafka-log-dirs.sh \
+  --bootstrap-server localhost:9092 \
+  --topic-list test-topic \
+  --delete-configured-dirs
 
-```bash
-# 1. 下载Flink
-wget https://archive.apache.org/dist/flink/flink-1.18.1/flink-1.18.1-bin-scala_2.12.tgz
-tar -zxf flink-1.18.1-bin-scala_2.12.tgz -C /opt/
-
-# 2. 配置flink-conf.yaml
-cat > /opt/flink-1.18.1/conf/flink-conf.yaml << EOF
-jobmanager.memory.process.size: 2048m
-taskmanager.memory.process.size: 4096m
-taskmanager.numberOfTaskSlots: 8
-parallelism.default: 2
-rest.port: 8081
-EOF
-
-# 3. 配置workers
-cat > /opt/flink-1.18.1/conf/workers << EOF
-node1
-node2
-node3
-EOF
-
-# 4. 启动集群
-/opt/flink-1.18.1/bin/start-cluster.sh
-```
-
-### 3.2 YARN模式
-
-```bash
-# 1. 提交Job到YARN
-flink run-application \
-  --target yarn-application \
-  -yjm 2048m \
-  -ytm 4096m \
-  -yD taskmanager.numberOfTaskSlots=8 \
-  /path/to/your-job.jar
-
-# 2. Session模式
-yarn-session.sh -n 3 -tm 4096m -s 8
-
-# 3. 提交Job
-flink run \
-  --target yarn-session \
-  /path/to/your-job.jar
-```
-
-### 3.3 高可用配置
-
-```bash
-# flink-conf.yaml
-high-availability: zookeeper
-high-availability.storageDir: hdfs:///flink/ha/
-zookeeper.quorum: node1:2181,node2:2181,node3:2181
-```
-
-## 4. 故障排查
-
-### 4.1 HDFS故障
-
-```bash
-# 1. NameNode无法启动
-# 检查日志
-tail -f /opt/hadoop/logs/hadoop-root-namenode-*.log
-
-# 修复损坏的元数据
-# 步骤：
-# 1. 停止集群
-# 2. 备份元数据目录
-# 3. 使用secondary NN恢复
-hdfs namenode -bootstrapStandby
-
-# 2. DataNode无法连接
-# 检查网络和配置
-hdfs dfsadmin -report
-hdfs dfsadmin -safemode leave
-
-# 3. 块丢失恢复
-hdfs fsck / -files -blocks -locations
-```
-
-### 4.2 Kafka故障
-
-```bash
-# 1. 消息积压处理
-# 增加消费者
-# 调整fetch参数
-kafka-consumer-groups.sh --bootstrap-server node1:9092 \
-  --group test-group --reset-offsets \
-  --to-earliest --topic test-topic --execute
-
-# 2. Leader不平衡
-kafka-leader-election.sh --election-type PREFERRED \
-  --topic test-topic --partition 0,1,2,3,4,5
-
-# 3. 磁盘满处理
-# 清理日志
-kafka-logs --delete \
+# 2. 调整retention
+kafka-configs.sh \
+  --bootstrap-server localhost:9092 \
+  --alter \
   --topic test-topic \
-  --partition 0 \
-  --interval-days 7
+  --add-config retention.ms=604800000
+
+
+# ==================== 问题3：ISR收缩 ====================
+# 原因：Broker落后/网络抖动
+# 解决：
+# 1. 检查Broker状态
+# 2. 调整参数
+replica.lag.time.max.ms=30000
+replica.socket.timeout.ms=30000
+
+
+# ==================== 问题4：Partition Leader不平衡 ====================
+# 解决：
+kafka-leader-election.sh \
+  --election-type PREFERRED \
+  --topic test-topic \
+  --partition 0,1,2,3 \
+  --bootstrap-server localhost:9092
 ```
 
-### 4.3 Flink故障
+### 2.4 复盘反思
+
+```sql
+CREATE TABLE kafka_issue_log (
+    issue_id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    issue_type STRING,
+    symptom STRING,
+    root_cause STRING,
+    solution STRING,
+    prevention STRING,
+    find_time TIMESTAMP,
+    resolve_time TIMESTAMP
+);
+
+INSERT INTO kafka_issue_log VALUES 
+('MESSAGES_LAG', '消费延迟10万条', '消费者处理慢', '增加消费者数', '监控消费速率', NOW(), NOW());
+```
+
+---
+
+## 3. Flink集群部署与运维
+
+### 3.1 发现问题
+
+**监控指标**：
+- Checkpoint时间 > 5分钟
+- 反压Task > 0
+- Task运行时间 > 预期2倍
+- 状态大小 > 10GB
+
+**告警**：
+- Job失败
+- Checkpoint失败
+- Task重启
+
+### 3.2 定位问题
 
 ```bash
-# 1. Checkpoint失败
-# 检查state大小
-# 调整checkpoint间隔
-# 检查外部存储
+# 1. 查看Job状态
+flink list -r
 
-# 2. 反压处理
-# 查看backpressure
+# 2. 查看反压
 curl http://jobmanager:8081/jobs/<jobid>/vertices/<vertexid>/backpressure
 
-# 3. 内存问题
-# 调整taskmanager.memory
-# 检查GC
-jstat -gcutil <pid> 1000
+# 3. 查看Checkpoin
+curl http://jobmanager:8081/jobs/<jobid>/checkpoints
+
+# 4. 查看TaskManager
+curl http://jobmanager:8081/taskmanagers
+
+# 5. 查看日志
+tail -f /opt/flink/log/flink-*-taskmanager-*.log
+
+# 6. 分析GC
+jstat -gcutil <taskmanager_pid> 1000
 ```
 
-## 5. 监控告警
+### 3.3 解决问题
 
-### 5.1 Prometheus配置
+```bash
+# ==================== 问题1：Checkpoint超时 ====================
+# 解决：
+# 1. 调整参数
+execution.checkpointing.interval=10min
+execution.checkpointing.timeout=15min
+execution.checkpointing.min-pause=5min
 
-```yaml
-# prometheus.yml
-global:
-  scrape_interval: 15s
+# 2. 增量Checkpoint
+state.backend.incremental=true
 
-scrape_configs:
-  - job_name: 'hadoop'
-    static_configs:
-      - targets: ['node1:9870', 'node2:9870', 'node3:9870']
+# 3. 调整状态后端
+state.backend=rocksdb
 
-  - job_name: 'kafka'
-    static_configs:
-      - targets: ['node1:9090', 'node2:9090', 'node3:9090']
 
-  - job_name: 'flink'
-    static_configs:
-      - targets: ['node1:8081']
+# ==================== 问题2：反压 ====================
+# 解决：
+# 1. 增加并行度
+env.setParallelism(8)
+
+# 2. 调整缓冲区
+taskmanager.network.memory.fraction=0.15
+taskmanager.network.buffer-per-channel=2mb
+
+# 3. 减少数据倾斜
+# 使用keyBy加盐
+
+
+# ==================== 问题3：状态膨胀 ====================
+# 解决：
+# 1. 设置TTL
+state.ttl=2d
+state.cleanup.min-pause=1h
+
+# 2. 定期清理
+# 使用RocksDB自动压缩
+
+
+# ==================== 问题4：Task频繁重启 ====================
+# 解决：
+# 1. 增加RestartStrategy
+env.setRestartStrategy(
+    RestartStrategies.exponentialDelayRestart(
+        1000,  // initialDelay
+        2.0,   // multiplier
+        600000  // maxDelay
+    )
+)
+
+# 2. 调整TM资源
+taskmanager.memory.process.size=8g
+taskmanager.heap.size=6g
 ```
 
-### 5.2 告警规则
+### 3.4 复盘反思
+
+```sql
+CREATE TABLE flink_issue_log (
+    issue_id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    job_name STRING,
+    issue_type STRING,      -- CHECKPOINT/BACKPRESSURE/RESTART/OOM
+    symptom STRING,
+    root_cause STRING,
+    solution STRING,
+    prevention STRING,
+    find_time TIMESTAMP,
+    resolve_time TIMESTAMP
+);
+
+INSERT INTO flink_issue_log VALUES 
+('realtime_order', 'CHECKPOINT', 'Checkpoint超时10分钟', '状态过大', '开启增量Checkpoint+TTL', '监控状态大小', NOW(), NOW());
+```
+
+---
+
+## 4. Spark集群部署与运维
+
+### 4.1 发现问题
+
+**监控指标**：
+- 任务执行时间 > 预期2倍
+- Stage数量 > 20
+- Shuffle数据量 > 100GB
+- Executor OOM
+
+**告警**：
+- 任务失败
+- Driver OOM
+- Shuffle fetch失败
+
+### 4.2 定位问题
+
+```bash
+# 1. 查看UI
+spark.sparkContext.uiWebUrl
+
+# 2. 查看Stage
+spark.sparkContext.statusTracker().getJobIds()
+
+# 3. 查看Executor
+spark.executor.memoryUsed()
+spark.executor.memory()
+
+# 4. 分析Shuffle
+spark.sql.shuffle.partitions
+
+# 5. 查看日志
+tail -f /opt/spark/logs/spark-*-org.apache.spark.*
+```
+
+### 4.3 解决问题
+
+```bash
+# ==================== 问题1：OOM ====================
+# 解决：
+# 1. 调整内存
+spark.executor.memory=8g
+spark.driver.memory=4g
+
+# 2. 调整内存比例
+spark.memory.fraction=0.6
+spark.memory.storageFraction=0.5
+
+# 3. 优化代码
+# 避免collect()大表
+# 使用filter提前过滤
+
+
+# ==================== 问题2：数据倾斜 ====================
+# 解决：
+# 1. 加盐打散
+df.withColumn("salt", (rand * 10).cast(IntegerType))
+
+# 2. 广播小表
+spark.sql.autoBroadcastJoinThreshold=10485760
+
+
+# ==================== 问题3：Shuffle文件多 ====================
+# 解决：
+# 1. 减少分区
+spark.sql.shuffle.partitions=200
+
+# 2. 合并小文件
+spark.sql.files.maxPartitionBytes=128MB
+
+
+# ==================== 问题4：GC频繁 ====================
+# 解决：
+# 1. 调整GC
+spark.executor.extraJavaOptions=-XX:+UseG1GC
+
+# 2. 增加内存
+spark.memory.fraction=0.5
+```
+
+### 4.4 复盘反思
+
+```sql
+CREATE TABLE spark_issue_log (
+    issue_id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    app_name STRING,
+    issue_type STRING,      -- OOM/SHUFFLE/SLOW/GC
+    symptom STRING,
+    root_cause STRING,
+    solution STRING,
+    prevention STRING,
+    find_time TIMESTAMP,
+    resolve_time TIMESTAMP
+);
+
+INSERT INTO spark_issue_log VALUES 
+('etl_job', 'OOM', 'Executor OOM', '数据量大，内存不足', '增加executor内存', '监控内存使用', NOW(), NOW());
+```
+
+---
+
+## 5. 监控告警体系
+
+### 5.1 监控指标
+
+| 组件 | 指标 | 阈值 | 告警级别 |
+|------|------|------|----------|
+| HDFS | DataNode存活率 | <100% | P0 |
+| YARN | 队列使用率 | >90% | P1 |
+| Kafka | 消费Lag | >10000 | P1 |
+| Flink | Checkpoint时间 | >10min | P1 |
+| Spark | 任务失败率 | >1% | P0 |
+
+### 5.2 告警配置
 
 ```yaml
-# alert rules
+# Prometheus告警规则
 groups:
   - name: hadoop_alerts
     rules:
-      - alert: HDFSDataNodeDown
-        expr: up{job="hadoop"} == 0
+      - alert: DataNodeDown
+        expr: up{job="datanode"} == 0
         for: 1m
         labels:
           severity: critical
         annotations:
-          summary: "HDFS DataNode down"
+          summary: "DataNode宕机"
           
       - alert: HighDiskUsage
-        expr: (1 - (node_filesystem_avail_bytes{mountpoint="/data"}/node_filesystem_size_bytes{mountpoint="/data"})) * 100 > 85
+        expr: (1 - node_filesystem_avail_bytes / node_filesystem_size_bytes) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+
+  - name: kafka_alerts
+    rules:
+      - alert: MessageLag
+        expr: kafka_consumer_group_lag > 10000
         for: 5m
         labels:
           severity: warning
 ```
 
-## 6. 边界情况处理
+---
 
-### 6.1 数据倾斜
+## 6. 常见问题速查表
 
-```bash
-# 现象：某些节点负载明显高于其他节点
-# 解决：
-# 1. 调整bucket数量
-# 2. 使用key加盐打散
-# 3. 调整JVM内存
-```
+### 6.1 Hadoop
 
-### 6.2 网络超时
+| 问题 | 现象 | 原因 | 方案 |
+|------|------|------|------|
+| NameNode OOM | 无法写入 | 元数据过大 | 增加内存，合并fsimage |
+| DataNode磁盘满 | 写入失败 | 数据增长快 | 清理数据，扩容 |
+| YARN资源争抢 | 任务排队 | 队列配置不合理 | 调整队列容量 |
 
-```bash
-# 现象：任务经常超时失败
-# 解决：
-# 1. 调整超时参数
-# 2. 增加重试次数
-# 3. 检查网络稳定性
-```
+### 6.2 Kafka
 
-### 6.3 磁盘空间不足
+| 问题 | 现象 | 原因 | 方案 |
+|------|------|------|------|
+| 消费延迟 | Lag增加 | 消费者少/处理慢 | 增加消费者，优化代码 |
+| 磁盘满 | 写入失败 | retention未设置 | 调整retention |
+| ISR收缩 | 副本同步慢 | Broker落后 | 检查网络，调整参数 |
 
-```bash
-# 现象：写入失败，磁盘满
-# 解决：
-# 1. 清理历史数据
-# 2. 调整日志保留策略
-# 3. 扩容或挂载新磁盘
-```
+### 6.3 Flink
+
+| 问题 | 现象 | 原因 | 方案 |
+|------|------|------|------|
+| Checkpoint慢 | 延迟增加 | 状态过大 | 增量Checkpoint |
+| 反压 | 处理变慢 | 下游瓶颈 | 增加并行度 |
+| 状态膨胀 | 内存增长 | 未清理 | 设置TTL |
+
+### 6.4 Spark
+
+| 问题 | 现象 | 原因 | 方案 |
+|------|------|------|------|
+| OOM | 任务失败 | 内存不足 | 增加内存，优化代码 |
+| 数据倾斜 | 部分Task慢 | Key不均 | 加盐打散 |
+| Shuffle慢 | Stage卡住 | 并行度低 | 调整partitions |
