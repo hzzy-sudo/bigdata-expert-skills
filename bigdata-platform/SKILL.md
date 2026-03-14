@@ -1,209 +1,59 @@
 ---
 name: bigdata-platform
-description: 大数据平台研发专家技能集。用于大数据组件源码分析、二次开发、内核原理研究、性能优化。包括Flink、Spark、Hudi、Iceberg、ClickHouse、StarRocks等组件的深度定制开发。适用于需要阅读源码理解原理、二次开发定制功能、组件性能优化、问题深度定位的场景。
+description: 大数据平台研发专家技能集。用于大数据组件源码分析，二次开发，内核原理研究，性能优化。包括Flink、Spark，Hudi、Iceberg、ClickHouse、StarRocks等组件的深度定制开发，源码阅读，问题定位，性能调优。此skill包含完整的发现问题-定位问题-解决问题-复盘反思闭环。
 ---
 
 # 大数据平台研发专家
 
+## 核心能力图谱
+
+```
+发现问题 ──→ 定位问题 ──→ 解决问题 ──→ 复盘反思
+    │              │              │            │
+    ▼              ▼              ▼            ▼
+  监控告警      源码阅读       内核修改      经验沉淀
+  性能分析      执行计划       参数调优      知识库
+  问题反馈      日志分析       代码优化      文档记录
+```
+
+---
+
 ## 1. Flink源码分析
 
-### 1.1 核心源码结构
+### 1.1 发现问题
 
-```
-flink-streaming-java/
-├── src/main/java/org/apache/flink/streaming/
-│   ├── api/
-│   │   ├── context/
-│   │   │   └── StreamExecutionEnvironment.java    # 运行环境
-│   │   ├── graph/
-│   │   │   ├── StreamGraph.java                  # 流图
-│   │   │   ├── StreamNode.java                   # 节点
-│   │   │   └── StreamEdge.java                   # 边
-│   │   └── operators/
-│   │       ├── KeyedProcessOperator.java         # Keyed处理算子
-│   │       └── WindowOperator.java               # 窗口算子
-│   └── runtime/
-│       ├── jobmanager/
-│       │   └── JobMaster.java                    # Job管理器
-│       ├── taskmanager/
-│       │   └── TaskExecutor.java                 # Task执行器
-│       └── checkpoint/
-│           ├── CheckpointCoordinator.java         # Checkpoint协调器
-│           └── CheckpointStorage.java            # Checkpoint存储
-```
+**问题信号**：
+- Checkpoint失败
+- 状态丢失
+- 背压持续
+- 内存泄漏
 
-### 1.2 JobGraph生成流程
+### 1.2 定位问题
 
 ```java
-// 核心流程分析
-// 1. StreamGraphGenerator.generate()
-//    - 遍历所有Transformation
-//    - 创建StreamNode和StreamEdge
-//    - 构成StreamGraph
+// 1. 追踪JobGraph生成
+// 入口：StreamGraphGenerator.generate()
 
-// 2. JobGraphGenerator.createJobGraph()
-//    - 将StreamGraph转换为JobGraph
-//    - 进行算子链化(Chainable)
-//    - 设置并行度和资源
+// 2. 追踪StreamGraph -> JobGraph
+// 入口：JobGraphGenerator.createJobGraph()
 
-// 关键方法追踪：
-// StreamGraphGenerator.generate() 
-//   -> transform()
+// 3. 追踪Task执行
+// 入口：StreamTask.execute()
 
-// 调试技巧：添加断点
+// 4. 追踪Checkpoint
+// 入口：CheckpointCoordinator.triggerCheckpoint()
+
+// 调试技巧
+// 添加断点在关键方法
 // StreamGraphGenerator.java:142
-// 查看transformation的输入输出
+// JobGraphGenerator.java:234
+// CheckpointCoordinator.java:456
 ```
 
-### 1.3 Checkpoint机制
+### 1.3 解决问题
 
 ```java
-// Checkpoint触发流程
-// 1. JobManager发送CheckpointTriggerMessage
-// 2. Source算子收到后，保存状态并发送Barrier
-// 3. Barrier向下游流动
-// 4. 每个算子收到所有输入的Barrier后，进行Checkpoint
-// 5. 所有算子完成，JobManager确认Checkpoint完成
-
-// 关键类：
-// - CheckpointCoordinator: 协调整个checkpoint过程
-// - StateBackend: 状态后端管理
-// - SnapshotStrategy: 快照策略
-
-// 配置参数：
-env.enableCheckpointing(60000);  // 60秒
-env.getCheckpointConfig().setMinPauseBetweenCheckpoints(30000);
-env.getCheckpointConfig().setCheckpointTimeout(600000);
-env.getCheckpointConfig().setMaxConcurrentCheckpoints(1);
-```
-
-### 1.4 状态管理
-
-```java
-// 状态类型
-// 1. KeyedState
-ValueState<T> keyedState = getRuntimeContext().getState(
-    new ValueStateDescriptor<>("name", String.class));
-
-ListState<T> listState = getRuntimeContext().getListState(
-    new ListStateDescriptor<>("list", String.class));
-
-MapState<K, V> mapState = getRuntimeContext().getMapState(
-    new MapStateDescriptor<>("map", String.class, String.class));
-
-// 2. OperatorState
-ListState<T> operatorState = getRuntimeContext().getListState(
-    new ListStateDescriptor<>("opList", String.class));
-
-// 3. BroadcastState
-MapState<B, V> broadcastState = getRuntimeContext().getBroadcastState(
-    new MapStateDescriptor<>("broadcast", String.class, String.class));
-
-// 状态后端选择
-// HashMapStateBackend: 状态小，内存充足
-// EmbeddedRocksDBStateBackend: 状态大，内存不足
-env.setStateBackend(new HashMapStateBackend());
-env.setStateBackend(new EmbeddedRocksDBStateBackend());
-```
-
-## 2. Spark源码分析
-
-### 2.1 核心源码结构
-
-```
-spark/
-├── core/
-│   └── src/main/scala/org/apache/spark/
-│       ├── SparkContext.scala              # 入口
-│       ├── rdd/
-│       │   ├── RDD.scala                  # RDD抽象
-│       │   └── ShuffledRDD.scala           # Shuffle RDD
-│       ├── scheduler/
-│       │   ├── DAGScheduler.scala          # DAG调度
-│       │   └── TaskScheduler.scala           # Task调度
-│       └── storage/
-│           └── BlockManager.scala           # 存储管理
-└── sql/
-    └── core/
-        └── src/main/scala/org/apache/spark/sql/
-            ├── SparkSession.scala           # SQL入口
-            ├── execution/
-            │   ├── SparkPlan.scala          # 执行计划
-            │   └── exchange/
-            │       └── ShuffleExchangeExec.scala  # Shuffle
-```
-
-### 2.2 DAG生成与Stage划分
-
-```scala
-// DAGScheduler.submitJob()
-// 1. 创建Stage
-// 2. 提交TaskSet到TaskScheduler
-
-// Stage划分规则：
-// 1. 窄依赖不切分(OneToOneDependency, PruneDependency)
-// 2. 宽依赖切分(ShuffleDependency)
-
-// 源码追踪：
-// DAGScheduler.scala:handleJobSubmitted()
-//   -> createResultStage()
-//   -> createShuffleMapStage()
-
-// 关键方法：
-// getShuffleDependency() // 检测Shuffle依赖
-// isStageMaterialized()   // 检查Stage是否完成
-```
-
-### 2.3 Shuffle原理
-
-```scala
-// ShuffleWrite (Map端)
-// ShuffleWriter.write()
-//   - SortShuffleWriter: 排序后写入
-//   - UnsafeShuffleWriter: 低内存写入
-//   - BypassMergeSortShuffleWriter: 不排序
-
-// ShuffleRead (Reduce端)
-// ShuffleBlockFetcherIterator.fetchNext()
-//   - 拉取多个map端数据
-//   - 合并排序
-
-// 参数调优：
-spark.shuffle.file.buffer = 1mb        // Map端缓冲
-spark.reducer.maxSizeInFlight = 256mb  // Reduce端缓冲
-spark.shuffle.io.numConnectionsPerPeer = 1
-```
-
-### 2.4 内存管理
-
-```
-Spark内存分布:
-+------------------+------------------+
-|    Execution     |     Storage      |
-|    (执行内存)      |     (存储内存)    |
-|  Shuffle/排序    |   Cache/广播      |
-+------------------+------------------+
-|         User Memory              |
-|   UDF/数据结构/元数据            |
-+------------------+------------------+
-|        Reserved (300MB)          |
-+----------------------------------+
-
-// 动态分配
-spark.memory.fraction = 0.6
-spark.memory.storageFraction = 0.5
-
-// Old Gen GC
-- XX:OldGenRatio = 0.75
-- XX:+UseG1GC
-```
-
-## 3. 二次开发
-
-### 3.1 自定义Source
-
-```java
-// Flink Source
+// 1. 自定义Source
 public class MySource implements SourceFunction<String> {
     private volatile boolean isRunning = true;
     
@@ -211,9 +61,7 @@ public class MySource implements SourceFunction<String> {
     public void run(SourceContext<String> ctx) {
         while (isRunning) {
             String data = fetchData();
-            synchronized (ctx.getCheckpointLock()) {
-                ctx.collect(data);
-            }
+            ctx.collect(data);
             Thread.sleep(1000);
         }
     }
@@ -222,124 +70,145 @@ public class MySource implements SourceFunction<String> {
     public void cancel() {
         isRunning = false;
     }
-    
-    private String fetchData() {
-        // 从外部系统获取数据
-        return "data";
-    }
 }
 
-// 使用
-DataStream<String> stream = env.addSource(new MySource());
-```
-
-### 3.2 自定义Sink
-
-```java
-// Flink Sink
+// 2. 自定义Sink
 public class MySink implements SinkFunction<String> {
     @Override
     public void invoke(String value, Context context) {
-        // 写入外部系统
         connection.write(value);
     }
 }
 
-// RichSinkFunction (带生命周期)
-public class MyRichSink extends RichSinkFunction<String> {
-    private Connection connection;
-    
+// 3. 自定义函数
+public class MyMapFunction implements MapFunction<String, String> {
     @Override
-    public void open(Configuration parameters) {
-        connection = createConnection();
-    }
-    
-    @Override
-    public void invoke(String value, Context context) {
-        connection.write(value);
-    }
-    
-    @Override
-    public void close() {
-        if (connection != null) {
-            connection.close();
-        }
+    public String map(String value) {
+        return process(value);
     }
 }
 ```
 
-### 3.3 自定义UDF
+### 1.4 复盘反思
 
-```java
-// Spark UDF
-// Java
-spark.udf().register("myUDF", 
-    (String s1, String s2) -> s1 + "_" + s2, 
-    DataTypes.StringType);
-
-// Scala
-val myUDF = udf((s1: String, s2: String) => s1 + "_" + s2)
-spark.udf.register("myUDF", myUDF)
-
-// 使用
-spark.sql("SELECT myUDF(col1, col2) FROM table")
+```sql
+CREATE TABLE flink_source_analysis (
+    analysis_id BIGINT PRIMARY KEY,
+    component STRING,          -- FLINK/SPARK/HUDI
+    issue_type STRING,       -- CHECKPOINT/BACKPRESSURE/MEMORY
+    symptom STRING,           -- 症状
+    root_cause STRING,       -- 根因
+    analysis_path STRING,    -- 源码路径
+    solution STRING,          -- 解决方案
+    prevention STRING,       -- 预防措施
+    author STRING,
+    create_time TIMESTAMP
+);
 ```
 
-### 3.4 自定义Connector
+---
 
-```java
-// Flink Kafka Connector配置
-KafkaSource<String> source = KafkaSource.<String>builder()
-    .setBootstrapServers("localhost:9092")
-    .setGroupId("my-group")
-    .setTopics("topic1", "topic2")
-    .setStartingOffsets(OffsetsInitializer.committedOffsets(
-        OffsetResetStrategy.EARLIEST))
-    .setValueOnlyDeserializer(new SimpleStringSchema())
-    .setProperties(properties)
-    .build();
+## 2. Spark源码分析
 
-// Kafka Sink
-KafkaSink<String> sink = KafkaSink.<String>builder()
-    .setBootstrapServers("localhost:9092")
-    .setRecordSerializer(KafkaRecordSerializationSchema.builder()
-        .setTopic("output-topic")
-        .setValueSerializationSchema(new SimpleStringSchema())
-        .build())
-    .setDeliveryGuarantee(DeliveryGuarantee.EXACTLY_ONCE)
-    .build();
+### 2.1 发现问题
+
+**问题信号**：
+- DAG划分不合理
+- Stage数量过多
+- Shuffle数据量大
+- 内存溢出
+
+### 2.2 定位问题
+
+```scala
+// 1. 追踪DAG生成
+// 入口：DAGScheduler.submitJob()
+
+// 2. 追踪Stage划分
+// 入口：DAGScheduler.createStage()
+
+// 3. 追踪Task执行
+// 入口：TaskSetManager.resourceOffer()
+
+// 4. 追踪Shuffle
+// 入口：ShuffleManager.getWriter()
+
+// 调试技巧
+spark.sparkContext.setJobGroup("job1", "description")
 ```
 
-## 4. Hudi二次开发
+### 2.3 解决问题
 
-### 4.1 表格式选择
+```scala
+// 1. 自定义Partitioner
+class MyPartitioner extends Partitioner {
+    override def numPartitions: Int = 100
+    override def getPartition(key: Any): Int = {
+        key.hashCode() % numPartitions
+    }
+}
 
-```java
-// Copy-on-Write (COW)
-// 优点：读快，写慢
-// 适用：读多写少场景
+// 2. 自定义UDF
+val myUDF = udf((s: String) => s.toUpperCase)
 
-// Merge-on-Read (MOR)
-// 优点：写快，读慢(需要 compaction)
-// 适用：写多读少场景
-
-// 创建COW表
- HoodieTableType.COPY_ON_WRITE
-
-// 创建MOR表
- HoodieTableType.MERGE_ON_READ
+// 3. 优化内存
+spark.memory.fraction = 0.6
+spark.memory.storageFraction = 0.5
 ```
 
-### 4.2 自定义Payload
+### 2.4 复盘反思
+
+```sql
+CREATE TABLE spark_source_analysis (
+    analysis_id BIGINT PRIMARY KEY,
+    issue_type STRING,
+    root_cause STRING,
+    source_path STRING,
+    solution STRING,
+    author STRING,
+    create_time TIMESTAMP
+);
+```
+
+---
+
+## 3. Hudi二次开发
+
+### 3.1 发现问题
+
+**问题信号**：
+- 表格式选择错误
+- 写入性能差
+- 压缩频率高
+
+### 3.2 定位问题
 
 ```java
-// 自定义合并策略
-public class MyPayload extends HoodieRecordPayload<HoodieData> {
+// 1. 分析表类型
+ HoodieTableType tableType = table.getTableType();
+
+// 2. 分析WriteConfig
+WriteConfig config = table.getConfig();
+
+// 3. 分析索引效率
+HoodieIndex index = table.getIndex();
+
+// 4. 分析压缩策略
+HoodieCompactionStrategy strategy = table.getCompactionStrategy();
+```
+
+### 3.3 解决问题
+
+```java
+// 1. 选择表类型
+// COW: 读多写少
+// MOR: 写多读少
+
+// 2. 自定义Payload
+public class MyPayload extends HoodieRecordPayload<MyData> {
     @Override
-    public Option<HoodieData> combineAndGetUpdateValue(
-            HoodieData existing,
-            HoodieData incoming,
-            Schema schema) {
+    public Option<MyData> combineAndGetUpdateValue(
+            MyData existing, MyData incoming, Schema schema) {
         // 自定义合并逻辑
         if (incoming.getTimestamp() > existing.getTimestamp()) {
             return Option.of(incoming);
@@ -347,99 +216,324 @@ public class MyPayload extends HoodieRecordPayload<HoodieData> {
         return Option.of(existing);
     }
 }
+
+// 3. 自定义索引
+public class MyIndex extends HoodieIndex<String, String> {
+    // 实现索引逻辑
+}
 ```
 
-### 4.3 索引优化
+### 3.4 复盘反思
+
+```sql
+CREATE TABLE hudi_development (
+    dev_id BIGINT PRIMARY KEY,
+    issue_type STRING,     -- TABLE_TYPE/COMPACTION/INDEX
+    solution STRING,
+    author STRING,
+    create_time TIMESTAMP
+);
+```
+
+---
+
+## 4. Iceberg二次开发
+
+### 4.1 发现问题
+
+**问题信号**：
+- 写入失败
+- 快照过多
+- 读取慢
+
+### 4.2 定位问题
 
 ```java
-// 布隆索引(默认)
- HoodieIndex index = BloomIndex.createIndex(config);
+// 1. 分析Table
+Table table = CatalogUtil.buildTable();
 
-// 哈希索引(分区较少)
- HoodieIndex index = HashIndex.createIndex(config);
+// 2. 分析Snapshot
+Iterable<Snapshot> snapshots = table.snapshots();
 
-// HBase索引(海量数据)
- HoodieIndex index = HBaseIndex.createIndex(config);
+// 3. 分析Manifest
+List<ManifestFile> manifests = snapshot.manifestFiles();
 ```
 
-## 5. 性能优化
-
-### 5.1 网络优化
+### 4.3 解决问题
 
 ```java
-// Flink网络配置
-taskmanager.network.memory.fraction = 0.15
-taskmanager.network.memory.min = 256mb
-taskmanager.network.memory.max = 1gb
-taskmanager.network.memory.buffer-per-channel = 2mb
-taskmanager.network.memory.exclusive-buffers-per-slot = 4
+// 1. 自定义Partition
+PartitionSpec spec = PartitionSpec.builderFor(table.schema())
+    .bucket("id", 16)
+    .identity("category")
+    .build();
 
-// Spark网络优化
-spark.network.timeout = 300s
-spark.executor.heartbeatInterval = 30s
+// 2. 自定义SortOrder
+SortOrder order = SortOrder.builderFor(table.schema())
+    .asc("ts")
+    .build();
+
+// 3. 优化写入
+Table table = ...
+table.newAppend()
+    .appendFile(dataFile)
+    .commit();
 ```
 
-### 5.2 内存优化
+### 4.4 复盘反思
 
-```java
-// Flink内存
-taskmanager.memory.process.size = 8g
-taskmanager.memory.flink.managed.size = 4g
-taskmanager.memory.task.heap.size = 2g
-taskmanager.memory.managed.size = 2g
-
-// Spark内存
-spark.executor.memory = 8g
-spark.driver.memory = 4g
-spark.memory.fraction = 0.6
-spark.memory.storageFraction = 0.5
+```sql
+CREATE TABLE iceberg_development (
+    dev_id BIGINT PRIMARY KEY,
+    issue_type STRING,
+    solution STRING,
+    author STRING,
+    create_time TIMESTAMP
+);
 ```
 
-### 5.3 Checkpoint优化
+---
 
-```java
-// 增量Checkpoint
-state.backend.incremental = true
+## 5. ClickHouse二次开发
 
-// 调整间隔
-env.enableCheckpointing(300000);  // 5分钟
-env.getCheckpointConfig().setMinPauseBetweenCheckpoints(60000);
+### 5.1 发现问题
 
-// 异步Checkpoint
-env.getCheckpointConfig().enableUnalignedCheckpoints();
+**问题信号**：
+- 查询慢
+- 写入阻塞
+- 磁盘空间满
+
+### 5.2 定位问题
+
+```sql
+-- 1. 分析查询
+EXPLAIN PLAN SELECT ...
+
+-- 2. 分析索引
+SYSTEM TABLE REGIONS;
+
+-- 3. 分析Merge
+SELECT 
+    database,
+    table,
+    sum(rows),
+    sum(bytes)
+FROM system.merges
+WHERE is_stale = 1
+GROUP BY database, table;
+
+-- 4. 分析Part
+SELECT 
+    table,
+    count(),
+    sum(rows),
+    max(modification_time)
+FROM system.parts
+WHERE database = 'default'
+GROUP BY table;
 ```
 
-## 6. 边界处理
+### 5.3 解决问题
 
-### 6.1 状态膨胀
+```sql
+-- 1. 物化视图优化
+CREATE MATERIALIZED VIEW mv_agg
+ENGINE = SummingMergeTree()
+ORDER BY (date, user_id)
+AS SELECT 
+    date,
+    user_id,
+    sum(amount) as amount
+FROM orders
+GROUP BY date, user_id;
 
-```方案>
-1. 定期清理状态
-2. 设置TTL
-3. 使用 RocksDB 自动压缩
-</方案>
+-- 2. 索引优化
+ALTER TABLE orders ADD INDEX idx_user user TYPE bloom_filter GRANULARITY 1;
 
-### 6.2 数据倾斜
-
-```java
-// 加盐打散
-val salt = (Math.random() * n).toInt
-df.withColumn("salt", lit(salt))
-  .withColumn("key", concat($"key", $"salt"))
-  .groupBy("key")
-  .agg(...)
+-- 3. 分区裁剪
+SELECT * FROM orders
+WHERE date >= '2024-01-01' AND date < '2024-02-01';
 ```
 
-### 6.3 背压处理
+### 5.4 复盘反思
+
+```sql
+CREATE TABLE clickhouse_optimization (
+    opt_id BIGINT PRIMARY KEY,
+    issue_type STRING,     -- QUERY/INSERT/STORAGE
+    solution STRING,
+    effect STRING,
+    author STRING,
+    create_time TIMESTAMP
+);
+```
+
+---
+
+## 6. StarRocks二次开发
+
+### 6.1 发现问题
+
+**问题信号**：
+- 查询超时
+- 导入失败
+- BE节点挂
+
+### 6.2 定位问题
+
+```sql
+-- 1. 分析查询
+SHOW FRONTEND CONFIG LIKE "%enable_profile%";
+SET enable_profile = true;
+-- 执行查询后
+SHOW PROC "/statements/profile";
+
+-- 2. 分析导入
+SHOW EXPORT FROM db;
+
+-- 3. 分析BE
+SHOW BACKENDS;
+```
+
+### 6.3 解决问题
+
+```sql
+-- 1. 物化视图
+CREATE MATERIALIZED VIEW mv_agg
+AS SELECT 
+    dt,
+    user_id,
+    SUM(amount) as amount,
+    COUNT(*) as cnt
+FROM orders
+GROUP BY dt, user_id;
+
+-- 2. 智能物化视图
+CREATE MATERIALIZED VIEW mv_auto
+DISTRIBUTED BY HASH(user_id) BUCKETS 10
+PROPERTIES (
+    "refresh_mode" = "auto"
+)
+AS SELECT ...
+FROM orders;
+
+-- 3. Join优化
+SELECT /*+ BROADCAST(orders) */ *
+FROM orders
+JOIN users ON orders.user_id = users.id;
+```
+
+### 6.4 复盘反思
+
+```sql
+CREATE TABLE starrocks_optimization (
+    opt_id BIGINT PRIMARY KEY,
+    issue_type STRING,     -- QUERY/IMPORT/BE
+    solution STRING,
+    effect STRING,
+    author STRING,
+    create_time TIMESTAMP
+);
+```
+
+---
+
+## 7. 性能优化
+
+### 7.1 发现问题
+
+**问题信号**：
+- CPU高
+- 内存高
+- IO高
+- 网络高
+
+### 7.2 定位问题
 
 ```bash
-# 查看背压
-flink list -r RUNNING
-curl http://jobmanager:8081/jobs/<jobid>
+# 1. CPU分析
+top -H -p <pid>
 
-# 增加并行度
-env.setParallelism(8)
+# 2. 内存分析
+jmap -heap <pid>
+jstat -gcutil <pid> 1000
 
-# 调整缓冲区
-taskmanager.network.memory.buffer-per-channel = 4mb
+# 3. IO分析
+iostat -x 1
+
+# 4. 网络分析
+netstat -an | grep <port>
 ```
+
+### 7.3 解决问题
+
+```properties
+# Flink优化
+taskmanager.memory.process.size: 8g
+taskmanager.memory.flink.managed.size: 4g
+taskmanager.network.memory.fraction: 0.15
+execution.checkpointing.interval: 5min
+
+# Spark优化
+spark.executor.memory: 8g
+spark.memory.fraction: 0.6
+spark.sql.shuffle.partitions: 200
+spark.serializer: org.apache.spark.serializer.KryoSerializer
+```
+
+### 7.4 复盘反思
+
+```sql
+CREATE TABLE platform_performance_log (
+    log_id BIGINT PRIMARY KEY,
+    component STRING,
+    issue_type STRING,      -- CPU/MEMORY/IO/NETWORK
+    symptom STRING,
+    root_cause STRING,
+    solution STRING,
+    effect STRING,
+    author STRING,
+    create_time TIMESTAMP
+);
+```
+
+---
+
+## 8. 常见问题速查
+
+### 8.1 Flink
+
+| 问题 | 现象 | 方案 |
+|------|------|------|
+| Checkpoint慢 | 延迟增加 | 增量Checkpoint |
+| 状态膨胀 | 内存增长 | 设置TTL |
+| 背压 | 处理变慢 | 增加并行度 |
+
+### 8.2 Spark
+
+| 问题 | 现象 | 方案 |
+|------|------|------|
+| OOM | 失败 | 增加内存 |
+| 倾斜 | 部分慢 | 加盐 |
+| Shuffle | 卡住 | 调整partitions |
+
+### 8.3 Hudi
+
+| 问题 | 现象 | 方案 |
+|------|------|------|
+| 写入慢 | 延迟高 | 选择COW |
+| 压缩频繁 | IO高 | 调整策略 |
+
+### 8.4 ClickHouse
+
+| 问题 | 现象 | 方案 |
+|------|------|------|
+| 查询慢 | 超时 | 物化视图 |
+| 写入堵 | 延迟高 | 批量写入 |
+
+### 8.5 StarRocks
+
+| 问题 | 现象 | 方案 |
+|------|------|------|
+| 查询慢 | 超时 | 物化视图 |
+| 导入慢 | 延迟高 | 调整并行度 |
